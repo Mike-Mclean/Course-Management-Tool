@@ -4,22 +4,26 @@ from error_handling import *
 
 import requests
 import logging
+import os
 
 from authlib.integrations.flask_client import OAuth
 
 app = Flask(__name__)
-app.secret_key = 'SECRET_KEY'
+app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key')
 app.logger.setLevel(logging.DEBUG)
 
 client = datastore.Client()
 
 USERS = "users"
 COURSES = "courses"
-AVATAR_BUCKET = 'assignment6_tarpaulin_avatars'
+AVATAR_BUCKET = os.getenv('AVATAR_BUCKET',)
 
-CLIENT_ID = 'dlzxwx2juCnK4yJc1u85FV9jXxM2wv6O'
-CLIENT_SECRET = 'hZLGFJFLPRUrnnRMK2aqkmaUIR_f7om48yXSi4SY-2gmCalas7qlbJkUrCqRDXkT'
-DOMAIN = 'dev-k8akkp1zy7xhtz4p.us.auth0.com'
+CLIENT_ID = os.getenv('AUTH0_CLIENT_ID')
+CLIENT_SECRET = os.getenv('AUTH0_CLIENT_SECRET')
+DOMAIN = os.getenv('AUTH0_DOMAIN')
+
+if not all([CLIENT_ID, CLIENT_SECRET, DOMAIN]):
+    raise ValueError('Auth0 environment variables (AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN) must be set')
 
 
 ALGORITHMS = ["RS256"]
@@ -40,7 +44,7 @@ auth0 = oauth.register(
 
 @app.route('/')
 def index():
-    return "Please navigate to /users/login to use this API"        
+    return "Please navigate to /users/login to use this API"
 
 def query_by_role(role):
     query = client.query(kind=USERS)
@@ -51,13 +55,13 @@ def query_by_role(role):
 @app.route('/users/login', methods=['POST'])
 def login_user():
     content = request.get_json()
-    
+
     try:
         username = content["username"]
         password = content["password"]
     except KeyError:
         return {"Error": "The request body is invalid"}, 400
-    
+
     body = {'grant_type':'password','username':username,
             'password':password,
             'client_id':CLIENT_ID,
@@ -71,20 +75,20 @@ def login_user():
         token = r.json()['id_token']
     except KeyError:
         return {"Error": "Unauthorized"}, 401
-    
+
     return {"token": token}, 200, {'Content-Type':'application/json'}
 
 #Get all users
 @app.route('/' + USERS, methods=['GET'])
 def get_users():
-    
+
     #Verify jwt exists and is valid
     payload = validate_jwt(request)
 
     #Query datastore to find the admin. Cross-reference with JWT provided in the request
     query_properties = {'role': 'admin'}
     validate_users(USERS, query_properties, payload)
-    
+
     #Create a list of users and return
     query = client.query(kind=USERS)
     results = list(query.fetch())
@@ -96,20 +100,20 @@ def get_users():
         sanitized_results.append(sanitized_r)
     return jsonify(sanitized_results), 200, {'Content-Type':'application/json'}
 
-#Get a users
+#Get a user
 @app.route('/' + USERS + '/<int:id>', methods=['GET'])
 def get_user(id):
     user, user_key = fetch_entity(USERS, id)
-    
+
     payload = validate_jwt(request)
-    
+
     query_properties = {'role': 'admin', '__key__': user_key}
     validate_users(USERS, query_properties, payload)
-    
+
     course_query = client.query(kind=COURSES)
     courses = list(course_query.fetch())
     user_courses = []
-    
+
     if user['role'] == 'student':
         for c in courses:
             try:
@@ -149,14 +153,14 @@ def route_avatar(id):
 def update_avatar(id):
     if 'file' not in request.files:
         return {"Error": "The request body is invalid"}, 400
-    
+
     payload = validate_jwt(request)
-    
+
     user, user_key = fetch_entity(USERS, id)
-    
+
     query_properties = {'role': 'admin', '__key__': user_key}
     validate_users(USERS, query_properties, payload)
-    
+
     file_obj = request.files['file']
 
     storage_client = storage.Client()
@@ -177,29 +181,29 @@ def update_avatar(id):
 @app.route('/' + USERS + '/<int:id>/avatar', methods=['GET'])
 def get_avatar(id):
     payload = validate_jwt(request)
-    
+
     user, user_key = fetch_entity(USERS, id)
-    
+
     query_properties = {'__key__': user_key}
     validate_users(USERS, query_properties, payload)
-    
+
     if not user.get('avatar_file_name'):
         return {"Error": "Not found"}, 404
-    
+
     return ({"avatar_url": url_for('get_avatar', id=user.key.id, _external=True)}, 200)
 
 @app.route('/' + USERS + '/<int:id>/avatar', methods=['DELETE'])
 def delete_avatar(id):
     payload = validate_jwt(request)
-    
+
     user, user_key = fetch_entity(USERS, id)
-    
+
     query_properties = {'__key__': user_key}
     validate_users(USERS, query_properties, payload)
 
     if not user.get('avatar_file_name'):
         return {"Error": "Not found"}, 404
-    
+
     storage_client = storage.Client()
     bucket = storage_client.bucket(AVATAR_BUCKET, 'assignment-6-tarpaulin')
     blob = bucket.blob(user['avatar_file_name'])
@@ -216,21 +220,18 @@ def create_course():
     content = request.get_json()
     new_course = datastore.Entity(key=client.key(COURSES))
 
-    #check id jwt is missing or invalid
     payload = validate_jwt(request)
-    
-    #check if jwt belongs to admin
+
     query_properties = {'role': 'admin'}
     validate_users(USERS, query_properties, payload)
-    
-    #Check if instructor_id is valid, if not, throw 400
+
     instructors = query_by_role('instructor')
     for inst in instructors:
         inst["id"] = inst.key.id
     instructor_ids = [x["id"] for x in instructors]
     if content['instructor_id'] not in instructor_ids:
         return {"Error": "The request body is invalid"}, 400
-    
+
     try:
         new_course.update({
             'subject': content['subject'],
@@ -241,9 +242,9 @@ def create_course():
         })
     except KeyError:
         return {"Error": "The request body is invalid"}, 400
-    
+
     new_course.update({'enrolled': []})
-    
+
     #Remove 'enrolled' from the response returned
     client.put(new_course)
     response_course = {}
@@ -280,21 +281,19 @@ def get_course(course_id):
 @app.route('/' + COURSES + '/<int:course_id>', methods=["PATCH"])
 def update_course(course_id):
     content = request.get_json()
-    
+
     payload = validate_jwt(request)
-    
-    #check if jwt belongs to admin
+
     query_properties = {'role': 'admin'}
     validate_users(USERS, query_properties, payload)
-    
+
     course = fetch_entity(COURSES, course_id)[0]
-    
-    #collect instructor IDs
+
     instructors = query_by_role('instructor')
     for inst in instructors:
         inst["id"] = inst.key.id
     instructor_ids = [x["id"] for x in instructors]
-    
+
     for key, value in content.items():
         if key == "instructor_id" and value not in instructor_ids:
             return {"Error": "The request body is invalid"}, 400
@@ -313,12 +312,12 @@ def update_course(course_id):
 #Delete a course
 @app.route('/' + COURSES + '/<int:course_id>', methods=["DELETE"])
 def delete_course(course_id):
-    
+
     payload = validate_jwt(request)
-    
+
     query_properties = {'role': 'admin'}
     validate_users(USERS, query_properties, payload)
-    
+
     course_key = fetch_entity(COURSES, course_id)[1]
 
     client.delete(course_key)
@@ -329,20 +328,19 @@ def delete_course(course_id):
 def get_all_courses():
     limit = int(request.args.get('limit', default = 3))
     offset = int(request.args.get('offset', default=0))
-    
+
     query = client.query(kind=COURSES)
     query.order = ['subject']
     courses = list(query.fetch(offset=offset, limit=limit))
-    
+
     for c in courses:
         del c['enrolled']
         c['id'] = c.key.id
         c['self'] = url_for('get_course', course_id=c.key.id, _external=True)
-    
+
     new_offset = limit + offset
     next = url_for('get_all_courses', limit=limit, offset=new_offset, _external = True)
 
-    #need to add logic to get rid of enrollment
     return jsonify({
     "courses": courses,
     "next": next
@@ -360,26 +358,26 @@ def route_enrollment(course_id):
 @app.route('/' + COURSES + '/<int:course_id>/students', methods=["GET"])
 def get_enrollment(course_id):
     course = fetch_entity(COURSES, course_id)[0]
-    
+
     payload = validate_jwt(request)
-    
+
     query_properties = {'role': 'admin', '__key__': client.key(USERS, course['instructor_id'])}
     validate_users(USERS, query_properties, payload)
-    
+
     return course['enrolled'], 200
 
 
 #Update enrollment
 @app.route('/' + COURSES + '/<int:course_id>/students', methods=["PATCH"])
 def update_enrollment(course_id):
-    
+
     payload = validate_jwt(request)
 
     content = request.get_json()
-    
+
     course = fetch_entity(COURSES, course_id)[0]
 
-    query_properties = {'role': 'admin', '__key__': client.key(USERS, course['instructor_id'])} 
+    query_properties = {'role': 'admin', '__key__': client.key(USERS, course['instructor_id'])}
     validate_users(USERS, query_properties, payload)
 
     students = query_by_role('student')
@@ -393,17 +391,17 @@ def update_enrollment(course_id):
             continue
         else:
             enrolled_list.append(student)
-    
+
     for student in content['remove']:
         if student not in student_ids:
             return {"Error": "Enrollment data is invalid"}, 409
         if student not in course['enrolled']:
             continue
         enrolled_list.remove(student)
-    
+
     course.update({'enrolled': enrolled_list})
     client.put(course)
-    
+
     return ('', 200)
 
 

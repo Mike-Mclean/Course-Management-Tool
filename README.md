@@ -43,7 +43,27 @@ Prerequisites
 - Python 3.8+ installed
 - Google Cloud SDK (for GCP auth and deployment)
 - Service account or application default credentials configured for Datastore and Cloud Storage access
-- Auth0 tenant and credentials (client ID/secret) configured as environment variables when running in production
+- Auth0 tenant and credentials (client ID/secret)
+
+Environment variables
+
+Create a `.env` file (or set environment variables in your shell) with the following keys. See `.env.example` for a template:
+
+```
+AUTH0_CLIENT_ID=your_auth0_client_id
+AUTH0_CLIENT_SECRET=your_auth0_client_secret
+AUTH0_DOMAIN=your_auth0_domain
+AVATAR_BUCKET=your_gcp_bucket_name
+SECRET_KEY=your_flask_secret_key
+```
+
+In development, you can use `python-dotenv` to load from a `.env` file:
+
+```bash
+pip install python-dotenv
+```
+
+Then, at the top of `main.py` or in your shell, load the variables before running.
 
 Install dependencies
 
@@ -57,9 +77,11 @@ Run the application locally
 python3 main.py
 ```
 
+The app will start on `http://127.0.0.1:8080` and validate that all required Auth0 environment variables are set on startup.
+
 Notes and configuration
 
-- The application expects Auth0 configuration and Google Cloud credentials to be available in the runtime environment. See `main.py` for constants (Auth0 client ID, client secret, and domain) and the `AVATAR_BUCKET` name. Replace hard-coded values with secure environment variables before deploying.
+- Auth0 configuration (client ID, client secret, domain) and the `AVATAR_BUCKET` name are loaded from environment variables at startup. Required variables are validated before the app initializes.
 - Pagination on `GET /courses` uses `limit` and `offset` query parameters. Default page size in the implementation is 3.
 - Role checks and error handling logic live in `error_handling.py` and are used consistently across endpoints.
 
